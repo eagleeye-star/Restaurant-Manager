@@ -33,11 +33,47 @@ const TAB_ACCESS = {
   staff:        ["Owner","Manager"],
 };
 
-const seedMenu = [];
+const seedMenu = [
+  { id:"m1",  name:"Spring Rolls (4pcs)",    category:"Starters",     price:25,  costPrice:10, available:true,  emoji:"🥟" },
+  { id:"m2",  name:"Pepper Soup",            category:"Starters",     price:35,  costPrice:14, available:true,  emoji:"🍲" },
+  { id:"m3",  name:"Grilled Tilapia",        category:"Mains",        price:120, costPrice:55, available:true,  emoji:"🐟" },
+  { id:"m4",  name:"Jollof Rice + Chicken",  category:"Mains",        price:80,  costPrice:35, available:true,  emoji:"🍛" },
+  { id:"m5",  name:"Fried Rice + Beef",      category:"Mains",        price:75,  costPrice:30, available:true,  emoji:"🍚" },
+  { id:"m6",  name:"Grilled Chicken",        category:"Grills",       price:110, costPrice:50, available:true,  emoji:"🍗" },
+  { id:"m7",  name:"Suya Platter",           category:"Grills",       price:95,  costPrice:40, available:true,  emoji:"🥩" },
+  { id:"m8",  name:"Plain Rice",             category:"Rice & Sides", price:20,  costPrice:8,  available:true,  emoji:"🍚" },
+  { id:"m9",  name:"Plantain (Fried)",       category:"Rice & Sides", price:20,  costPrice:7,  available:true,  emoji:"🍌" },
+  { id:"m10", name:"Malt Drink",             category:"Drinks",       price:12,  costPrice:7,  available:true,  emoji:"🥤" },
+  { id:"m11", name:"Coca-Cola",              category:"Drinks",       price:10,  costPrice:6,  available:true,  emoji:"🥫" },
+  { id:"m12", name:"Water (500ml)",          category:"Drinks",       price:5,   costPrice:2,  available:true,  emoji:"💧" },
+  { id:"m13", name:"Fanta",                  category:"Drinks",       price:10,  costPrice:6,  available:true,  emoji:"🍊" },
+  { id:"m14", name:"Puff Puff",              category:"Desserts",     price:15,  costPrice:5,  available:true,  emoji:"🍩" },
+  { id:"m15", name:"Ice Cream",              category:"Desserts",     price:25,  costPrice:10, available:true,  emoji:"🍦" },
+];
 
-const seedTables = [];
+const seedTables = [
+  { id:"t1",  number:1,  capacity:2, status:"available", section:"Indoor"  },
+  { id:"t2",  number:2,  capacity:2, status:"available", section:"Indoor"  },
+  { id:"t3",  number:3,  capacity:4, status:"available", section:"Indoor"  },
+  { id:"t4",  number:4,  capacity:4, status:"available", section:"Indoor"  },
+  { id:"t5",  number:5,  capacity:6, status:"available", section:"Indoor"  },
+  { id:"t6",  number:6,  capacity:6, status:"available", section:"Outdoor" },
+  { id:"t7",  number:7,  capacity:8, status:"available", section:"Outdoor" },
+  { id:"t8",  number:8,  capacity:4, status:"available", section:"Outdoor" },
+  { id:"t9",  number:9,  capacity:2, status:"available", section:"Bar"     },
+  { id:"t10", number:10, capacity:4, status:"available", section:"Bar"     },
+];
 
-const seedIngredients = [];
+const seedIngredients = [
+  { id:"i1", name:"Chicken (kg)",      unit:"kg",     qty:12, minQty:5,  costPerUnit:30  },
+  { id:"i2", name:"Rice (kg)",         unit:"kg",     qty:25, minQty:10, costPerUnit:8   },
+  { id:"i3", name:"Tomatoes (kg)",     unit:"kg",     qty:8,  minQty:5,  costPerUnit:12  },
+  { id:"i4", name:"Tilapia (kg)",      unit:"kg",     qty:10, minQty:4,  costPerUnit:40  },
+  { id:"i5", name:"Cooking Oil (L)",   unit:"L",      qty:6,  minQty:3,  costPerUnit:18  },
+  { id:"i6", name:"Onions (kg)",       unit:"kg",     qty:5,  minQty:3,  costPerUnit:6   },
+  { id:"i7", name:"Beef (kg)",         unit:"kg",     qty:8,  minQty:4,  costPerUnit:55  },
+  { id:"i8", name:"Plantain (bunch)",  unit:"bunch",  qty:4,  minQty:2,  costPerUnit:15  },
+];
 
 const seedOrders = [];
 
@@ -45,7 +81,12 @@ const seedReservations = [];
 
 const seedSales = [];
 
-const seedStaff = [{ id:"st1", name:"Admin", role:"Owner", pin:"1234", shift:"All Day" }];
+const seedStaff = [
+  { id:"st1", name:"Admin",  role:"Owner",   roles:["Owner"],   pin:"1234", shift:"All Day" },
+  { id:"st2", name:"Waiter", role:"Waiter",  roles:["Waiter"],  pin:"2222", shift:"Morning" },
+  { id:"st3", name:"Chef",   role:"Chef",    roles:["Chef"],    pin:"3333", shift:"All Day" },
+  { id:"st4", name:"Cashier",role:"Cashier", roles:["Cashier"], pin:"4444", shift:"Morning" },
+];
 
 function loadData() {
   try { const r=localStorage.getItem(STORAGE_KEY); if(r) return JSON.parse(r); } catch(_){}
