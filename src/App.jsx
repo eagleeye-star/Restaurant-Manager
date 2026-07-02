@@ -72,6 +72,18 @@ function StatCard({label,value,color,icon}){
       <div style={{fontSize:18,marginBottom:6}}>{icon}</div>
       <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{label}</div>
       <div style={{fontSize:22,fontWeight:900,color:color||C.accent}}>{value}</div>
+
+      {showReset&&(
+        <ResetModal
+          adminPin={(db?.staff||[]).find(s=>s.role==="Owner")?.pin||""}
+          accent="#f59e0b" cardBg="#1a1d27"
+          onCancel={()=>setShowReset(false)}
+          onConfirm={()=>{
+            ["restaurantMgr_v2_license","resto_setup","restaurantMgr_v2_license_inst"].forEach(k=>localStorage.removeItem(k));
+            setShowReset(false); window.location.reload();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -274,7 +286,11 @@ function ResetModal({ onConfirm, onCancel, adminPin, accent, cardBg }) {
   const [pin,  setPin]  = useState("");
   const [err,  setErr]  = useState("");
   const [step, setStep] = useState(1);
-  const check = () => { if (pin !== String(adminPin)) { setErr("Incorrect PIN."); return; } setStep(2); };
+  const check = () => {
+    if (!adminPin) { setErr("No admin PIN set yet. Complete the setup wizard first."); return; }
+    if (pin !== String(adminPin)) { setErr("Incorrect PIN. Try again."); setPin(""); return; }
+    setStep(2);
+  };
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:9999, padding:20 }}>
       <div style={{ background: cardBg||"#1f2330", border:"1px solid #ef444455", borderRadius:14, padding:28, width:"min(94vw,400px)" }}>
@@ -633,6 +649,9 @@ export default function App(){
   const [orderItems,setOrderItems]=useState([]);
   const [menuCat,setMenuCat]=useState("All");
   const [reportPeriod,setReportPeriod]=useState("today");
+  const [reservPeriod,setReservPeriod]=useState("active"); // active | history
+  const [reportCustom,setReportCustom]=useState({from:"",to:""});
+  const [reservAlert,setReservAlert]=useState(null);
   const [billOrder,setBillOrder]=useState(null);
   const [kitchenFilter,setKitchenFilter]=useState("active");
 
@@ -699,7 +718,7 @@ export default function App(){
       setDb(prev=>({...prev,orders:prev.orders.map(o=>o.id===existing.id?{...o,items:merged,total:newTotal,status:"preparing"}:o)}));
       showToast("Items added to existing order.");
     } else {
-      const order={id:uid(),tableId:orderTable.id,tableNumber:orderTable.number,items:orderItems,status:"preparing",waiter:loggedInStaff?.name||"",total:orderTotal,createdAt:`${today()} ${nowTime()}`,note:form.orderNote||""};
+      const order={id:uid(),tableId:orderTable?.id||"takeaway",tableNumber:orderTable?.number||"—",items:orderItems,status:"preparing",waiter:loggedInStaff?.name||"",total:orderTotal+Number(form.deliveryFee||0),createdAt:`${today()} ${nowTime()}`,note:form.orderNote||"",orderType:form.orderType||"dine-in",deliveryAddress:form.deliveryAddress||"",deliveryFee:Number(form.deliveryFee||0)};
       setDb(prev=>({...prev,orders:[...prev.orders,order],tables:prev.tables.map(t=>t.id===orderTable.id?{...t,status:"occupied"}:t)}));
       showToast(`Order sent to kitchen — Table ${orderTable.number}`);
     }
@@ -714,7 +733,14 @@ export default function App(){
     const discAmt=billOrder.total*(disc/100);
     const final=billOrder.total-discAmt;
     const sale={id:uid(),tableNumber:billOrder.tableNumber,items:billOrder.items,total:billOrder.total,discount:disc,finalTotal:final,paymentMethod:form.paymentMethod||"Cash",waiter:billOrder.waiter,date:today(),time:nowTime()};
-    setDb(prev=>({...prev,sales:[...prev.sales,sale],orders:prev.orders.map(o=>o.id===billOrder.id?{...o,status:"paid"}:o),tables:prev.tables.map(t=>t.id===billOrder.tableId?{...t,status:"available"}:t)}));
+    setDb(prev=>({
+      ...prev,
+      sales:[...prev.sales,sale],
+      orders:prev.orders.map(o=>o.id===billOrder.id?{...o,status:"paid"}:o),
+      tables:prev.tables.map(t=>t.id===billOrder.tableId?{...t,status:"available"}:t),
+      // Mark linked reservation as served
+      reservations:prev.reservations.map(r=>r.tableId===billOrder.tableId&&r.status==="in-progress"?{...r,status:"served"}:r),
+    }));
     printReceipt(sale);
     showToast(`Bill settled — ${fmt(final)} via ${sale.paymentMethod}`);
     close();
@@ -729,15 +755,55 @@ export default function App(){
   const restockIngredient=()=>{ const add=Number(form.addQty)||0; setDb(prev=>({...prev,ingredients:prev.ingredients.map(i=>i.id===editing.id?{...i,qty:i.qty+add}:i)})); showToast(`Restocked +${add} ${editing.unit}`); close(); };
 
   // ── Reservation CRUD ──────────────────────────────────────────────────
+  const seatGuest=(reservation)=>{
+    const order={id:uid(),tableId:reservation.tableId,tableNumber:reservation.tableNumber,items:[],status:"preparing",waiter:loggedInStaff?.name||"",total:0,createdAt:`${today()} ${nowTime()}`,note:`Guest: ${reservation.name} (${reservation.guests} guests)`,orderType:"dine-in",deliveryAddress:"",deliveryFee:0};
+    setDb(prev=>({
+      ...prev,
+      reservations: prev.reservations.map(r=>r.id===reservation.id?{...r,status:"in-progress"}:r),
+      tables: prev.tables.map(t=>t.id===reservation.tableId?{...t,status:"occupied"}:t),
+      orders: [...prev.orders,order],
+    }));
+    showToast(`${reservation.name} seated at Table ${reservation.tableNumber}. Order created.`);
+  };
+
+  const makeTableAvailable=(tableId)=>{
+    if(!window.confirm("Mark this table as Available? Use only if the table has been cleared manually.")) return;
+    setDb(prev=>({...prev,tables:prev.tables.map(t=>t.id===tableId?{...t,status:"available"}:t)}));
+    showToast("Table marked as available.");
+  };
+
   const saveReservation=()=>{ const r={id:editing?editing.id:uid(),name:form.rname||"",phone:form.rphone||"",date:form.rdate||today(),time:form.rtime||"12:00",guests:Number(form.rguests)||2,tableId:form.rtableId||"",tableNumber:tables.find(t=>t.id===form.rtableId)?.number||"—",note:form.rnote||"",status:"confirmed"}; setDb(prev=>({...prev,reservations:editing?prev.reservations.map(x=>x.id===editing.id?r:x):[...prev.reservations,r],tables:prev.tables.map(t=>t.id===r.tableId?{...t,status:"reserved"}:t)})); showToast(editing?"Updated.":"Reservation confirmed!"); close(); };
-  const cancelReservation=id=>{ setDb(prev=>({...prev,reservations:prev.reservations.map(r=>r.id===id?{...r,status:"cancelled"}:r)})); showToast("Cancelled.","warn"); };
+  const cancelReservation=id=>{
+    setDb(prev=>{
+      const res=prev.reservations.find(r=>r.id===id);
+      const otherActive=prev.reservations.filter(r=>r.id!==id&&r.tableId===res?.tableId&&r.status==="confirmed");
+      return {
+        ...prev,
+        reservations: prev.reservations.map(r=>r.id===id?{...r,status:"cancelled"}:r),
+        tables: prev.tables.map(t=> res&&t.id===res.tableId&&otherActive.length===0&&t.status==="reserved" ? {...t,status:"available"} : t),
+      };
+    });
+    showToast("Reservation cancelled. Table is now available.","warn");
+  };
 
   // ── Staff CRUD ────────────────────────────────────────────────────────
-  const saveStaff=()=>{ const s={id:editing?editing.id:uid(),name:form.sname||"",role:form.srole||"Waiter",pin:form.spin||"0000",shift:form.sshift||"Morning"}; setDb(prev=>({...prev,staff:editing?prev.staff.map(x=>x.id===editing.id?s:x):[...prev.staff,s]})); showToast(editing?"Updated.":"Staff added."); close(); };
+  const saveStaff=()=>{
+    const roles=(form.sroles||[form.srole||"Waiter"]).filter(Boolean);
+    const s={id:editing?editing.id:uid(),name:form.sname||"",role:roles[0]||"Waiter",roles:roles,pin:form.spin||"0000",shift:form.sshift||"Morning"};
+    setDb(prev=>({...prev,staff:editing?prev.staff.map(x=>x.id===editing.id?s:x):[...prev.staff,s]}));
+    showToast(editing?"Updated.":"Staff added."); close();
+  };
 
   // ── Report data ───────────────────────────────────────────────────────
   const reportSales=useMemo(()=>{
     if(reportPeriod==="today") return todaySales;
+    if(reportPeriod==="year"){
+      const yr=new Date().getFullYear().toString();
+      return sales.filter(s=>s.date&&s.date.startsWith(yr));
+    }
+    if(reportPeriod==="custom"&&reportCustom.from&&reportCustom.to){
+      return sales.filter(s=>s.date&&s.date>=reportCustom.from&&s.date<=reportCustom.to);
+    }
     const days=reportPeriod==="week"?7:30;
     const cutoff=new Date("2026-06-27"); cutoff.setDate(cutoff.getDate()-days+1);
     return sales.filter(s=>new Date(s.date)>=cutoff);
@@ -856,6 +922,14 @@ export default function App(){
         </div>
       </div>
 
+      {/* Reservation due alert (Update D) */}
+      {reservAlert&&(
+        <div style={{background:"#92400e",color:"#fef3c7",padding:"12px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13,fontWeight:700}}>
+          <span>⏰ Table {reservAlert.tableNumber} reservation for <strong>{reservAlert.name}</strong> ({reservAlert.guests} guests) is now due — {reservAlert.time}</span>
+          <button onClick={()=>setReservAlert(null)} style={{background:"transparent",border:"1px solid #fef3c7",borderRadius:6,color:"#fef3c7",padding:"3px 10px",cursor:"pointer",fontWeight:700,fontSize:12}}>Dismiss</button>
+        </div>
+      )}
+
       <div style={{padding:"20px",maxWidth:1200,margin:"0 auto"}}>
 
         {/* ── TABLES ── */}
@@ -886,6 +960,23 @@ export default function App(){
                         {order&&<div style={{fontSize:11,color:C.accent,marginTop:4}}>{order.items.length} items · {fmt(order.total)}</div>}
                         {order&&<div style={{fontSize:11,color:C.muted}}>{order.waiter} · {order.status}</div>}
                         <div style={{fontSize:11,color:C.muted,marginTop:8,fontWeight:600}}>{t.status==="available"?"Tap to take order":t.status==="occupied"?"Tap to view bill":"Reserved"}</div>
+                        {/* Seat guest button for reserved tables */}
+                        {t.status==="reserved"&&(()=>{
+                          const res=reservations.find(r=>r.tableId===t.id&&(r.status==="confirmed"||r.status==="in-progress"));
+                          if(!res) return null;
+                          return(
+                            <div style={{marginTop:8,display:"flex",gap:5}} onClick={e=>e.stopPropagation()}>
+                              {res.status==="confirmed"&&<button onClick={()=>seatGuest(res)} style={{flex:1,background:"#14532d",color:"#86efac",border:"none",borderRadius:6,padding:"5px 0",fontSize:11,fontWeight:700,cursor:"pointer"}}>🪑 Seat Guest</button>}
+                              <button onClick={()=>makeTableAvailable(t.id)} style={{flex:1,background:"#1e3a5f",color:"#93c5fd",border:"none",borderRadius:6,padding:"5px 0",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓ Free Table</button>
+                            </div>
+                          );
+                        })()}
+                        {/* Manual override for occupied tables */}
+                        {t.status==="occupied"&&(
+                          <div style={{marginTop:6}} onClick={e=>e.stopPropagation()}>
+                            <button onClick={()=>makeTableAvailable(t.id)} style={{width:"100%",background:"#1e3a5f",color:"#93c5fd",border:"none",borderRadius:6,padding:"5px 0",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓ Make Available</button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -898,13 +989,18 @@ export default function App(){
         {/* ── ORDERS ── */}
         {view==="orders"&&(
           <>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
               <div style={{fontWeight:800,fontSize:17}}>📋 All Orders</div>
-              <button onClick={()=>{setOrderTable(null);setOrderItems([]);setForm({});setModal("selectTable");}} style={{background:C.accent,color:C.bg,border:"none",borderRadius:8,padding:"8px 18px",fontWeight:800,cursor:"pointer",fontSize:13}}>+ New Order</button>
+              <button onClick={()=>{setOrderTable(null);setOrderItems([]);setForm({orderType:"dine-in"});setModal("selectTable");}} style={{background:C.accent,color:C.bg,border:"none",borderRadius:8,padding:"8px 18px",fontWeight:800,cursor:"pointer",fontSize:13}}>+ New Order</button>
+            </div>
+            <div style={{display:"flex",gap:6,marginBottom:14}}>
+              {[["all","All"],["dine-in","🍽 Dine In"],["takeaway","🥡 Takeaway"],["delivery","🚚 Delivery"]].map(([k,l])=>(
+                <button key={k} onClick={()=>setForm(p=>({...p,orderFilter:k}))} style={{background:(form.orderFilter||"all")===k?C.accent:"transparent",color:(form.orderFilter||"all")===k?C.bg:C.muted,border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 12px",fontWeight:700,cursor:"pointer",fontSize:12}}>{l}</button>
+              ))}
             </div>
             <div style={{display:"grid",gap:12,gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))"}}>
-              {orders.length===0&&<div style={{color:C.muted,textAlign:"center",padding:32}}>No orders yet.</div>}
-              {[...orders].reverse().map(o=>{
+              {orders.filter(o=>(form.orderFilter||"all")==="all"||(o.orderType||"dine-in")===(form.orderFilter||"all")).length===0&&<div style={{color:C.muted,textAlign:"center",padding:32}}>No orders yet.</div>}
+              {[...orders].reverse().filter(o=>(form.orderFilter||"all")==="all"||(o.orderType||"dine-in")===(form.orderFilter||"all")).map(o=>{
                 const statusColor=o.status==="preparing"?C.accent:o.status==="serving"?C.green:o.status==="paid"?C.muted:C.red;
                 return(
                   <div key={o.id} style={{background:C.card,borderRadius:12,padding:18,border:`1px solid ${C.border}`}}>
@@ -1021,35 +1117,53 @@ export default function App(){
           <>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
               <div style={{fontWeight:800,fontSize:17}}>📅 Reservations</div>
-              <button onClick={()=>{setEditing(null);setForm({rdate:today(),rtime:"12:00",rguests:2});setModal("editReservation");}} style={{background:C.accent,color:C.bg,border:"none",borderRadius:8,padding:"8px 18px",fontWeight:800,cursor:"pointer",fontSize:13}}>+ New Reservation</button>
+              <div style={{display:"flex",gap:8}}>
+                {[["active","Active"],["history","History"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>setReservPeriod(k)} style={{background:reservPeriod===k?C.accent:"transparent",color:reservPeriod===k?C.bg:C.muted,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 14px",fontWeight:700,cursor:"pointer",fontSize:12}}>{l}</button>
+                ))}
+                <button onClick={()=>{setEditing(null);setForm({rdate:today(),rtime:"12:00",rguests:2});setModal("editReservation");}} style={{background:C.accent,color:C.bg,border:"none",borderRadius:8,padding:"6px 18px",fontWeight:800,cursor:"pointer",fontSize:13}}>+ New</button>
+              </div>
             </div>
             <div style={{display:"grid",gap:10,gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))"}}>
-              {reservations.length===0&&<div style={{color:C.muted,textAlign:"center",padding:32}}>No reservations yet.</div>}
-              {[...reservations].sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time)).map(r=>{
-                const isToday=r.date===today();
-                const isCancelled=r.status==="cancelled";
-                return(
-                  <div key={r.id} style={{background:C.card,borderRadius:12,padding:18,border:`1px solid ${isToday&&!isCancelled?C.accent:isCancelled?C.red+"33":C.border}`,opacity:isCancelled?0.6:1}}>
-                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                      <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{r.name}</div><div style={{fontSize:12,color:C.muted}}>📞 {r.phone}</div></div>
-                      <Bdg bg={isCancelled?"#7f1d1d":isToday?"#92400e":"#1a2744"} tc={isCancelled?C.red:isToday?C.accent:C.blue}>{isCancelled?"Cancelled":isToday?"TODAY":r.date}</Bdg>
-                    </div>
-                    <div style={{display:"flex",gap:12,marginBottom:8,flexWrap:"wrap"}}>
-                      <span style={{fontSize:13,color:C.text}}>🕐 {r.time}</span>
-                      <span style={{fontSize:13,color:C.text}}>👥 {r.guests} guests</span>
-                      <span style={{fontSize:13,color:C.text}}>🪑 Table {r.tableNumber}</span>
-                    </div>
-                    {r.note&&<div style={{fontSize:12,color:C.accent,marginBottom:8,fontStyle:"italic"}}>"{r.note}"</div>}
-                    {!isCancelled&&(
-                      <div style={{display:"flex",gap:6,marginTop:8}}>
-                        <button onClick={()=>{setEditing(r);setForm({rname:r.name,rphone:r.phone,rdate:r.date,rtime:r.time,rguests:r.guests,rtableId:r.tableId,rnote:r.note});setModal("editReservation");}}
-                          style={{flex:1,background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:7,padding:"6px 0",fontSize:12,fontWeight:700,cursor:"pointer"}}>Edit</button>
-                        <button onClick={()=>cancelReservation(r.id)} style={{flex:1,background:"#7f1d1d44",color:C.red,border:"none",borderRadius:7,padding:"6px 0",fontSize:12,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+              {(()=>{
+                const active=["confirmed","in-progress"];
+                const hist=["cancelled","served"];
+                const filtered=reservPeriod==="active"
+                  ? [...reservations].filter(r=>active.includes(r.status)).sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time))
+                  : [...reservations].filter(r=>hist.includes(r.status)).sort((a,b)=>b.date.localeCompare(a.date)||b.time.localeCompare(a.time));
+                if(filtered.length===0) return <div style={{color:C.muted,textAlign:"center",padding:32,gridColumn:"1/-1"}}>{reservPeriod==="active"?"No active reservations.":"No reservation history yet."}</div>;
+                return filtered.map(r=>{
+                  const isToday=r.date===today();
+                  const isCancelled=r.status==="cancelled";
+                  const isServed=r.status==="served";
+                  const isInProgress=r.status==="in-progress";
+                  const statusColor=isCancelled?C.red:isServed?C.green:isInProgress?C.accent:isToday?C.accent:C.blue;
+                  const statusBg=isCancelled?"#7f1d1d":isServed?"#14532d":isInProgress?"#92400e":isToday?"#92400e":"#1a2744";
+                  const statusLabel=isCancelled?"Cancelled":isServed?"Served":isInProgress?"In Progress":isToday?"TODAY":r.date;
+                  return(
+                    <div key={r.id} style={{background:C.card,borderRadius:12,padding:18,border:`1px solid ${statusColor}33`,opacity:(isCancelled||isServed)?0.75:1}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                        <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{r.name}</div><div style={{fontSize:12,color:C.muted}}>📞 {r.phone}</div></div>
+                        <Bdg bg={statusBg} tc={statusColor}>{statusLabel}</Bdg>
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                      <div style={{display:"flex",gap:12,marginBottom:8,flexWrap:"wrap"}}>
+                        <span style={{fontSize:13,color:C.text}}>🕐 {r.time}</span>
+                        <span style={{fontSize:13,color:C.text}}>👥 {r.guests} guests</span>
+                        <span style={{fontSize:13,color:C.text}}>🪑 Table {r.tableNumber}</span>
+                      </div>
+                      {r.note&&<div style={{fontSize:12,color:C.accent,marginBottom:8,fontStyle:"italic"}}>"{r.note}"</div>}
+                      {reservPeriod==="active"&&!isCancelled&&!isServed&&(
+                        <div style={{display:"flex",gap:6,marginTop:8}}>
+                          {!isInProgress&&<button onClick={()=>{setEditing(r);setForm({rname:r.name,rphone:r.phone,rdate:r.date,rtime:r.time,rguests:r.guests,rtableId:r.tableId,rnote:r.note});setModal("editReservation");}}
+                            style={{flex:1,background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:7,padding:"6px 0",fontSize:12,fontWeight:700,cursor:"pointer"}}>Edit</button>}
+                          {!isInProgress&&<button onClick={()=>seatGuest(r)} style={{flex:1,background:"#14532d",color:C.green,border:"none",borderRadius:7,padding:"6px 0",fontSize:12,fontWeight:700,cursor:"pointer"}}>🪑 Seat</button>}
+                          <button onClick={()=>cancelReservation(r.id)} style={{flex:1,background:"#7f1d1d44",color:C.red,border:"none",borderRadius:7,padding:"6px 0",fontSize:12,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </>
         )}
@@ -1107,11 +1221,19 @@ export default function App(){
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
               <div style={{fontWeight:800,fontSize:17}}>📊 Sales Reports</div>
               <div style={{display:"flex",gap:6}}>
-                {[["today","Today"],["week","7 Days"],["month","30 Days"]].map(([k,l])=>(
+                {[["today","Today"],["week","7 Days"],["month","30 Days"],["year","This Year"],["custom","Custom"]].map(([k,l])=>(
                   <button key={k} onClick={()=>setReportPeriod(k)} style={{background:reportPeriod===k?C.accent:"transparent",color:reportPeriod===k?C.bg:C.muted,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 14px",fontWeight:700,cursor:"pointer",fontSize:12}}>{l}</button>
                 ))}
               </div>
             </div>
+            {reportPeriod==="custom"&&(
+              <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
+                <span style={{fontSize:13,color:C.muted}}>From:</span>
+                <input type="date" value={reportCustom.from} onChange={e=>setReportCustom(p=>({...p,from:e.target.value}))} style={{padding:"7px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:13,outline:"none"}}/>
+                <span style={{fontSize:13,color:C.muted}}>To:</span>
+                <input type="date" value={reportCustom.to} onChange={e=>setReportCustom(p=>({...p,to:e.target.value}))} style={{padding:"7px 10px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:13,outline:"none"}}/>
+              </div>
+            )}
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:16}}>
               {[
                 {l:"Revenue",      v:fmt(reportRevenue),    color:C.accent, icon:"💰"},
@@ -1442,18 +1564,29 @@ export default function App(){
       {modal==="editStaff"&&(
         <Modal title={editing?"Edit Staff":"Add Staff"} onClose={close}>
           <Row label="Name"><input style={iS} type="text" value={form.sname||""} onChange={fld("sname")}/></Row>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <Row label="Role">
-              <select style={iS} value={form.srole||"Waiter"} onChange={fld("srole")}>
-                {["Owner","Manager","Waiter","Chef","Cashier","Bartender"].map(r=><option key={r}>{r}</option>)}
-              </select>
-            </Row>
-            <Row label="Shift">
-              <select style={iS} value={form.sshift||"Morning"} onChange={fld("sshift")}>
-                {["Morning","Evening","All Day","Night"].map(s=><option key={s}>{s}</option>)}
-              </select>
-            </Row>
+          <div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Roles (select all that apply)</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+              {["Owner","Manager","Waiter","Chef","Cashier","Bartender","Delivery"].map(r=>{
+                const cur=form.sroles||(editing?.roles)||[editing?.role||"Waiter"];
+                const checked=cur.includes(r);
+                return(
+                  <button key={r} type="button" onClick={()=>setForm(p=>{
+                    const prev2=p.sroles||(editing?.roles)||[editing?.role||"Waiter"];
+                    const next=checked?prev2.filter(x=>x!==r):[...prev2,r];
+                    return{...p,sroles:next.length?next:prev2};
+                  })} style={{padding:"5px 12px",borderRadius:6,border:`1.5px solid ${checked?C.accent:C.border}`,background:checked?C.accent+"22":"transparent",color:checked?C.accent:C.muted,fontWeight:checked?700:400,cursor:"pointer",fontSize:12}}>
+                    {r}
+                  </button>
+                );
+              })}
+            </div>
           </div>
+          <Row label="Shift">
+            <select style={iS} value={form.sshift||"Morning"} onChange={fld("sshift")}>
+              {["Morning","Evening","All Day","Night"].map(s=><option key={s}>{s}</option>)}
+            </select>
+          </Row>
           <Row label="PIN (4 digits)"><input style={iS} type="password" maxLength={6} value={form.spin||""} onChange={fld("spin")}/></Row>
           <div style={{display:"flex",gap:8,marginTop:6}}>
             <button onClick={saveStaff} style={{flex:1,background:C.accent,color:C.bg,border:"none",borderRadius:8,padding:"10px 0",fontWeight:800,cursor:"pointer"}}>{editing?"Save Changes":"Add Staff"}</button>
