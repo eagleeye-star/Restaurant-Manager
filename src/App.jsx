@@ -657,7 +657,7 @@ export default function App(){
 
   useEffect(()=>{ try{localStorage.setItem(STORAGE_KEY,JSON.stringify(db));}catch(_){} },[db]);
 
-  const {menu,tables,ingredients,orders,reservations,sales,staff}=db;
+  const {menu=[],tables=[],ingredients=[],orders=[],reservations=[],sales=[],staff=[]}=db;
 
   const showToast=(msg,type="ok")=>{ setToast({msg,type}); setTimeout(()=>setToast(null),2800); };
   const close=()=>{ setModal(null); setEditing(null); setForm({}); setOrderTable(null); setOrderItems([]); setBillOrder(null); };
@@ -816,7 +816,7 @@ export default function App(){
 
   const salesByDay=useMemo(()=>{
     const days=reportPeriod==="today"?1:reportPeriod==="week"?7:14;
-    return Array.from({length:days},(_,i)=>{ const d=new Date("2026-06-27"); d.setDate(d.getDate()-(days-1-i)); const ds=d.toISOString().slice(0,10); return {l:ds.slice(5),v:reportSales.filter(s=>s.date===ds).reduce((a,s)=>a+s.total,0)}; });
+    return Array.from({length:days},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()-(days-1-i)); const ds=d.toISOString().slice(0,10); return {l:ds.slice(5),v:reportSales.filter(s=>s.date===ds).reduce((a,s)=>a+s.total,0)}; });
   },[reportSales,reportPeriod]);
   const maxBar=Math.max(...salesByDay.map(d=>d.v),1);
 
@@ -851,8 +851,6 @@ export default function App(){
       localStorage.setItem("resto_setup","1"); setSetupDone(true);
     }}
   />;
-  if (isExpired(license.expiry)) return <LicenseExpiredScreen license={license} onRenew={() => setLicense(null)} />;
-
   // ── Show login screen if not logged in ────────────────────────────────
   if(!loggedInStaff){
     return <StaffLoginScreen staff={staff} onLogin={s=>{ setLoggedInStaff(s); showToast(`Welcome, ${s.name}!`); }} />;
