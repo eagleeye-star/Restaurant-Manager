@@ -113,18 +113,6 @@ function StatCard({label,value,color,icon}){
       <div style={{fontSize:18,marginBottom:6}}>{icon}</div>
       <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{label}</div>
       <div style={{fontSize:22,fontWeight:900,color:color||C.accent}}>{value}</div>
-
-      {showReset&&(
-        <ResetModal
-          adminPin={(db?.staff||[]).find(s=>s.role==="Owner")?.pin||""}
-          accent="#f59e0b" cardBg="#1a1d27"
-          onCancel={()=>setShowReset(false)}
-          onConfirm={()=>{
-            ["restaurantMgr_v2_license","resto_setup","restaurantMgr_v2_license_inst"].forEach(k=>localStorage.removeItem(k));
-            setShowReset(false); window.location.reload();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -655,6 +643,92 @@ function printReceipt(sale){
   w.document.close();
 }
 
+
+// ── BACKUP COMPONENT ─────────────────────────────────────────────────────────
+function RestaurantBackup({ db, setDb, showToast, institution, saveInst, onShowReset }) {
+  const [confirmRestore,setConfirmRestore]=useState(null);
+  const [fileError,setFileError]=useState("");
+  const stats2=[["Menu Items",(db.menu||[]).length],["Tables",(db.tables||[]).length],["Sales",(db.sales||[]).length],["Staff",(db.staff||[]).length]];
+  const download=()=>{
+    const blob=new Blob([JSON.stringify({app:"Restaurant Manager",exportedAt:new Date().toISOString(),version:1,data:db},null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`Restaurant-backup-${new Date().toISOString().slice(0,10)}.json`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+    showToast("Backup downloaded","ok");
+  };
+  const onFile=(e)=>{
+    const file=e.target.files?.[0];if(!file)return;setFileError("");
+    const reader=new FileReader();
+    reader.onload=()=>{try{const p=JSON.parse(reader.result);if(!p.data){setFileError("Not a valid backup file.");return;}setConfirmRestore(p);}catch{setFileError("Could not read file.");}};
+    reader.readAsText(file);e.target.value="";
+  };
+  const exportCSV=()=>{
+    const rows=[["Item","Category","Price (GH₵)","Cost (GH₵)","Available"]];
+    (db.menu||[]).forEach(m=>rows.push([m.name,m.category,m.price,m.costPrice,m.available?"Yes":"No"]));
+    const csv=rows.map(r=>r.map(x=>`"${String(x||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+    a.download=`Restaurant-menu-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);a.click();a.remove();
+    showToast("CSV exported","ok");
+  };
+  return(
+    <>
+      <div style={{fontWeight:800,fontSize:17,marginBottom:6}}>💾 Backup & Restore</div>
+      <p style={{color:C.muted,fontSize:13,marginBottom:20,maxWidth:560,lineHeight:1.6}}>All data lives in this browser. Download a backup regularly and store it in Google Drive, email, or USB.</p>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+        <div style={{background:C.card,borderRadius:12,padding:18,border:`1px solid ${C.border}`}}>
+          <div style={{fontWeight:800,marginBottom:12}}>⬇️ Export Backup</div>
+          <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+            {stats2.map(([l,v])=>(
+              <div key={l} style={{background:C.surface,borderRadius:7,padding:"8px 12px"}}>
+                <div style={{fontSize:10,color:C.muted}}>{l}</div>
+                <div style={{fontSize:15,fontWeight:700}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <button onClick={download} style={{background:C.accent,color:C.bg,border:"none",borderRadius:8,padding:"10px 16px",fontWeight:700,cursor:"pointer",width:"100%",marginBottom:8}}>⬇️ Download Backup (.json)</button>
+          <button onClick={exportCSV} style={{background:C.green,color:"#fff",border:"none",borderRadius:8,padding:"10px 16px",fontWeight:700,cursor:"pointer",width:"100%"}}>📊 Export Menu CSV</button>
+        </div>
+        <div style={{background:C.card,borderRadius:12,padding:18,border:`1px solid ${C.border}`}}>
+          <div style={{fontWeight:800,marginBottom:10}}>⬆️ Restore from Backup</div>
+          <div style={{background:"#7c2d12",border:"1px solid #f59e0b",borderRadius:8,padding:10,marginBottom:12,fontSize:12,color:"#fbbf24"}}>⚠️ Restoring overwrites all current data.</div>
+          <label style={{display:"block",textAlign:"center",padding:"10px 16px",borderRadius:8,border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",fontWeight:600,background:C.surface}}>
+            📂 Choose Backup File…
+            <input type="file" accept="application/json" onChange={onFile} style={{display:"none"}}/>
+          </label>
+          {fileError&&<div style={{color:C.red,fontSize:12,marginTop:8}}>{fileError}</div>}
+        </div>
+      </div>
+
+      <div style={{background:C.card,borderRadius:12,padding:18,border:`1px solid ${C.border}`,marginBottom:14}}>
+        <div style={{fontWeight:800,marginBottom:8}}>🏢 Restaurant Profile</div>
+        <p style={{fontSize:12,color:C.muted,marginBottom:12}}>Name and address appear on receipts and in the app header.</p>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <input value={institution?.name||""} onChange={e=>saveInst({...institution,name:e.target.value})} placeholder="Restaurant Name" style={{padding:"9px 11px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:13,outline:"none",fontFamily:"inherit"}}/>
+          <input value={institution?.address||""} onChange={e=>saveInst({...institution,address:e.target.value})} placeholder="Address" style={{padding:"9px 11px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:13,outline:"none",fontFamily:"inherit"}}/>
+        </div>
+      </div>
+
+      <div style={{background:C.card,borderRadius:12,padding:18,border:"1px solid #ef444444",marginBottom:14}}>
+        <div style={{fontWeight:800,marginBottom:8,color:C.red}}>🗑 Reset All Data</div>
+        <p style={{fontSize:12,color:C.muted,marginBottom:12}}>Permanently deletes all data and resets the app. Requires admin PIN.</p>
+        <button onClick={onShowReset} style={{background:"#dc2626",color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",fontWeight:700,cursor:"pointer",fontSize:13}}>🗑 Reset App Data</button>
+      </div>
+
+      {confirmRestore&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300}} onClick={()=>setConfirmRestore(null)}>
+          <div style={{background:C.card,borderRadius:14,padding:28,width:"min(94vw,400px)",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}>
+            <h3 style={{margin:"0 0 12px",color:C.text}}>⚠️ Confirm Restore</h3>
+            <p style={{fontSize:13,color:C.muted,marginBottom:16}}>Backup from <strong>{new Date(confirmRestore.exportedAt).toLocaleString()}</strong>.<br/>This replaces ALL current data and cannot be undone.</p>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setConfirmRestore(null)} style={{flex:1,background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 0",fontWeight:600,cursor:"pointer",color:C.muted}}>Cancel</button>
+              <button onClick={()=>{setDb(confirmRestore.data);setConfirmRestore(null);showToast("Data restored","ok");}} style={{flex:1,background:"#991b1b",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:700,cursor:"pointer"}}>✅ Yes, Restore</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ══════════════════════════════════════════════════════════════════════════
@@ -900,6 +974,22 @@ export default function App(){
   return(
     <div style={{fontFamily:"'Inter','Segoe UI',sans-serif",background:C.bg,minHeight:"100vh",color:C.text}}>
 
+      {showReset&&(
+        <ResetModal
+          adminPin={(db?.staff||[]).find(s=>(s.roles||[s.role]).includes("Owner"))?.pin||""}
+          accent={C.accent}
+          cardBg={C.card}
+          onCancel={()=>setShowReset(false)}
+          onConfirm={()=>{
+            localStorage.removeItem(STORAGE_KEY);
+            localStorage.removeItem(LICENSE_KEY);
+            localStorage.removeItem("resto_setup");
+            localStorage.removeItem(LICENSE_KEY+"_inst");
+            setShowReset(false);
+            window.location.reload();
+          }}
+        />
+      )}
       {toast&&<div style={{position:"fixed",top:16,right:16,zIndex:999,background:toastBg[toast.type],color:"#fff",padding:"11px 20px",borderRadius:10,fontWeight:700,fontSize:13,boxShadow:"0 4px 20px rgba(0,0,0,0.4)"}}>{toast.msg}</div>}
 
       {/* PIN LOCK OVERLAY */}
@@ -1402,53 +1492,7 @@ export default function App(){
           </>
         )}
 
-        {view==="backup"&&(()=>{
-          const [confirmRestore,setConfirmRestore]=useState(null);
-          const [fileError,setFileError]=useState("");
-          const stats2=[["Menu Items",db.menu.length],["Tables",db.tables.length],["Sales",Object.values(db.sales).flat().length],["Staff",db.staff.length]];
-          const download=()=>{
-            const blob=new Blob([JSON.stringify({app:"Restaurant Manager",exportedAt:new Date().toISOString(),version:1,data:db},null,2)],{type:"application/json"});
-            const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`Restaurant-backup-${new Date().toISOString().slice(0,10)}.json`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
-            showToast("Backup downloaded","ok");
-          };
-          const onFile=(e)=>{
-            const file=e.target.files?.[0];if(!file)return;setFileError("");
-            const reader=new FileReader();
-            reader.onload=()=>{try{const p=JSON.parse(reader.result);if(!p.data){setFileError("Not a valid backup file.");return;}setConfirmRestore(p);}catch{setFileError("Could not read file.");}};
-            reader.readAsText(file);e.target.value="";
-          };
-          return(
-            <>
-              <div style={{fontWeight:800,fontSize:17,marginBottom:6}}>💾 Backup & Restore</div>
-              <p style={{color:C.muted,fontSize:13,marginBottom:20,maxWidth:560,lineHeight:1.6}}>All data lives only in this browser. Download a backup regularly and store it in Google Drive, email, or a USB drive.</p>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
-                <div style={{background:C.card,borderRadius:12,padding:18,border:`1px solid ${C.border}`}}>
-                  <div style={{fontWeight:800,marginBottom:12}}>⬇️ Export Backup</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>{stats2.map(([l,v])=><div key={l} style={{background:C.surface,borderRadius:7,padding:"8px 10px"}}><div style={{fontSize:10,color:C.muted}}>{l}</div><div style={{fontSize:15,fontWeight:700}}>{v}</div></div>)}</div>
-                  <button onClick={download} style={{background:C.accent,color:C.bg,border:"none",borderRadius:8,padding:"10px 16px",fontWeight:700,cursor:"pointer",width:"100%"}}>⬇️ Download Backup File</button>
-                </div>
-                <div style={{background:C.card,borderRadius:12,padding:18,border:`1px solid ${C.border}`}}>
-                  <div style={{fontWeight:800,marginBottom:10}}>⬆️ Restore from Backup</div>
-                  <div style={{background:"#3a2a0f",border:`1px solid ${C.accent}`,borderRadius:8,padding:10,marginBottom:12,fontSize:12,color:"#fcd9a8"}}>⚠️ Restoring overwrites all data. Export first if needed.</div>
-                  <label style={{display:"block",textAlign:"center",padding:"9px 16px",borderRadius:8,border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",fontWeight:600}}>Choose Backup File… <input type="file" accept="application/json" onChange={onFile} style={{display:"none"}}/></label>
-                  {fileError&&<div style={{color:C.red,fontSize:12,marginTop:8}}>{fileError}</div>}
-                </div>
-              </div>
-              {confirmRestore&&(
-                <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300}} onClick={()=>setConfirmRestore(null)}>
-                  <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:28,width:"min(94vw,400px)"}} onClick={e=>e.stopPropagation()}>
-                    <h3 style={{margin:"0 0 12px",color:C.accent}}>Confirm Restore</h3>
-                    <p style={{fontSize:13,color:C.muted,marginBottom:16}}>Backup from <strong style={{color:C.text}}>{new Date(confirmRestore.exportedAt).toLocaleString()}</strong>. This replaces all current data.</p>
-                    <div style={{display:"flex",gap:10}}>
-                      <button onClick={()=>setConfirmRestore(null)} style={{flex:1,background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 0",color:C.muted,fontWeight:600,cursor:"pointer"}}>Cancel</button>
-                      <button onClick={()=>{setDb(confirmRestore.data);setConfirmRestore(null);showToast("Data restored","ok");}} style={{flex:1,background:"#991b1b",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",fontWeight:700,cursor:"pointer"}}>Yes, Restore</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          );
-        })()}
+        {view==="backup"&&<RestaurantBackup db={db} setDb={setDb} showToast={showToast} institution={institution} saveInst={inst=>{setInstitution(inst);saveInstitution(LICENSE_KEY,inst);}} onShowReset={()=>setShowReset(true)} />}
       </div>
 
       {/* ══ MODALS ══════════════════════════════════════════════════════════ */}
